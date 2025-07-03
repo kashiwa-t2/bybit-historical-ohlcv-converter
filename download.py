@@ -30,6 +30,7 @@ def interactive_mode():
     print()
     
     # Get symbol
+    print("利用可能な取引ペア: https://public.bybit.com/trading/")
     while True:
         symbol = input("取引ペアを入力してください (例: BTCUSDT): ").strip().upper()
         if symbol:
@@ -43,11 +44,11 @@ def interactive_mode():
         return 1
     
     # Get date range option
-    print("\n日付範囲を選択してください:")
-    print("  [1] 全期間をダウンロード")
-    print("  [2] 特定の期間を指定")
-    print("  [3] 開始日から最新まで")
-    print("  [4] 最古から終了日まで")
+    print("\nダウンロードする期間を選択してください:")
+    print("  [1] 利用可能な全ての期間")
+    print("  [2] 期間を指定する")
+    print("  [3] 指定した日付から最新まで")
+    print("  [4] 最古から指定した日付まで")
     
     while True:
         choice = input("選択 [1]: ").strip() or "1"
@@ -64,11 +65,18 @@ def interactive_mode():
         print("    全期間の日付範囲を取得中...")
         earliest_available, latest_available = fetch_available_date_range(symbol)
         if earliest_available is None or latest_available is None:
-            print(f"エラー: {symbol} の利用可能期間を取得できませんでした。")
-            print(f"https://public.bybit.com/trading/{symbol} を確認してください。")
-            return 1
-        start_date = earliest_available
-        end_date = latest_available
+            print(f"日付範囲の自動取得に失敗しました。")
+            print(f"一般的な期間 (2020-01-01 ～ 昨日) を使用しますか？")
+            fallback_choice = input("'y' で続行、'n' で中止 [y]: ").strip().lower() or 'y'
+            if fallback_choice != 'y':
+                print("処理を中止しました。")
+                return 1
+            start_date = datetime(2020, 1, 1)
+            end_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        else:
+            start_date = earliest_available
+            end_date = latest_available
+        
         date_desc = f"全期間 ({start_date.date()} ～ {end_date.date()})"
         
     elif choice == "2":
@@ -96,7 +104,7 @@ def interactive_mode():
         date_desc = f"{start_date.date()} ～ {end_date.date()}"
         
     elif choice == "3":
-        # From start date to latest
+        # From start date to latest (UTC yesterday)
         while True:
             start_str = input("開始日を入力してください (YYYY-MM-DD): ").strip()
             try:
@@ -105,12 +113,9 @@ def interactive_mode():
             except ValueError:
                 print("正しい日付形式で入力してください (YYYY-MM-DD)")
         
-        print("    最新日付を取得中...")
-        _, latest_available = fetch_available_date_range(symbol)
-        if latest_available is None:
-            print(f"エラー: {symbol} の利用可能期間を取得できませんでした。")
-            return 1
-        end_date = latest_available
+        # Use yesterday as end date (data is typically available until yesterday)
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = today - timedelta(days=1)
         date_desc = f"{start_date.date()} ～ 最新 ({end_date.date()})"
         
     elif choice == "4":
@@ -126,10 +131,23 @@ def interactive_mode():
         print("    最古日付を取得中...")
         earliest_available, _ = fetch_available_date_range(symbol)
         if earliest_available is None:
-            print(f"エラー: {symbol} の利用可能期間を取得できませんでした。")
-            return 1
-        start_date = earliest_available
-        date_desc = f"最古 ({start_date.date()}) ～ {end_date.date()}"
+            print(f"最古日付の自動取得に失敗しました。")
+            print(f"一般的な開始日を使用するか、手動で指定してください。")
+            while True:
+                fallback_choice = input("開始日を入力してください (YYYY-MM-DD) または 'auto' で2020-01-01: ").strip()
+                if fallback_choice.lower() == 'auto':
+                    start_date = datetime(2020, 1, 1)
+                    break
+                else:
+                    try:
+                        start_date = parse_date(fallback_choice)
+                        break
+                    except ValueError:
+                        print("正しい日付形式で入力してください (YYYY-MM-DD)")
+        else:
+            start_date = earliest_available
+        
+        date_desc = f"{start_date.date()} ～ {end_date.date()}"
     
     # Get timeframe option
     print("\n時間足を選択してください:")
@@ -151,18 +169,11 @@ def interactive_mode():
         for i, tf in enumerate(timeframes, 1):
             print(f"  [{i}] {tf}")
         
-        selected_timeframes = []
-        print("\n番号を入力してください (例: 1,3,5 または 1 3 5)")
-        print("完了したらEnterキーを押してください")
-        
         while True:
-            selection = input("選択: ").strip()
+            selection = input("番号を入力してください (例: 1,3,5 または 1 3 5): ").strip()
             if not selection:
-                if selected_timeframes:
-                    break
-                else:
-                    print("少なくとも1つの時間足を選択してください。")
-                    continue
+                print("少なくとも1つの時間足を選択してください。")
+                continue
             
             try:
                 # Parse comma-separated or space-separated numbers
@@ -171,19 +182,21 @@ def interactive_mode():
                 else:
                     numbers = [int(x.strip()) for x in selection.split()]
                 
-                valid_selections = []
+                selected_timeframes = []
+                valid = True
                 for num in numbers:
                     if 1 <= num <= len(timeframes):
                         tf = timeframes[num - 1]
                         if tf not in selected_timeframes:
                             selected_timeframes.append(tf)
-                            valid_selections.append(tf)
+                        # 重複は無視
                     else:
                         print(f"無効な番号: {num} (1-{len(timeframes)}の範囲で入力してください)")
+                        valid = False
+                        break
                 
-                if valid_selections:
-                    print(f"追加されました: {', '.join(valid_selections)}")
-                    print(f"現在の選択: {', '.join(selected_timeframes)}")
+                if valid and selected_timeframes:
+                    break
                 
             except ValueError:
                 print("数字を入力してください (例: 1,3,5 または 1 3 5)")
@@ -319,9 +332,19 @@ def fetch_available_date_range(symbol: str) -> Tuple[Optional[datetime], Optiona
         with urlopen(req, timeout=30) as response:
             html_content = response.read().decode('utf-8')
         
-        # Extract file names matching the pattern: SYMBOL[YYYY-MM-DD].csv.gz
-        pattern = rf'{re.escape(symbol)}\[(\d{{4}}-\d{{2}}-\d{{2}})\]\.csv\.gz'
-        matches = re.findall(pattern, html_content)
+        # Extract file names matching patterns: Try different formats
+        patterns_to_try = [
+            rf'{re.escape(symbol)}\[(\d{{4}}-\d{{2}}-\d{{2}})\]\.csv\.gz',  # SYMBOL[YYYY-MM-DD].csv.gz
+            rf'{re.escape(symbol)}(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',     # SYMBOLYYYY-MM-DD.csv.gz
+            rf'{re.escape(symbol)}_(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',    # SYMBOL_YYYY-MM-DD.csv.gz
+            rf'{re.escape(symbol)}-(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',    # SYMBOL-YYYY-MM-DD.csv.gz
+        ]
+        
+        matches = None
+        for pattern in patterns_to_try:
+            matches = re.findall(pattern, html_content)
+            if matches:
+                break
         
         if not matches:
             print("No data files found!")
