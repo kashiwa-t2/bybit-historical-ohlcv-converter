@@ -32,7 +32,7 @@ def parse_arguments():
     parser.add_argument(
         "-t", "--timeframe",
         default="1m",
-        choices=["1s", "1m", "5m", "15m", "1h", "4h", "all"],
+        choices=["1s", "1m", "5m", "15m", "1h", "4h", "1d", "all"],
         help="Target timeframe for OHLCV conversion (default: 1m). Use 'all' to generate all timeframes."
     )
     parser.add_argument(
@@ -217,7 +217,7 @@ def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
     
     # Determine timeframes to process
     if timeframe == "all":
-        timeframes = ["1s", "1m", "5m", "15m", "1h", "4h"]
+        timeframes = ["1s", "1m", "5m", "15m", "1h", "4h", "1d"]
     else:
         timeframes = [timeframe]
     

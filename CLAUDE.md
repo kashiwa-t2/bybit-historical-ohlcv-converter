@@ -107,8 +107,13 @@ if output_file.exists():
 ```
 data/
 └── BTCUSDT/
-    ├── BTCUSDT_2024-01-01_1sec.csv  # 1秒足OHLCV
-    ├── BTCUSDT_2024-01-02_1sec.csv
+    ├── BTCUSDT_2024-01-01_1s.csv    # 1秒足OHLCV
+    ├── BTCUSDT_2024-01-01_1m.csv    # 1分足OHLCV
+    ├── BTCUSDT_2024-01-01_5m.csv    # 5分足OHLCV
+    ├── BTCUSDT_2024-01-01_15m.csv   # 15分足OHLCV
+    ├── BTCUSDT_2024-01-01_1h.csv    # 1時間足OHLCV
+    ├── BTCUSDT_2024-01-01_4h.csv    # 4時間足OHLCV
+    ├── BTCUSDT_2024-01-01_1d.csv    # 1日足OHLCV
     └── temp/                         # 一時ファイル（自動削除）
 ```
 

@@ -3,7 +3,7 @@
 Convert large tick data CSV files to OHLCV format with multiple timeframe support.
 Designed to handle very large files efficiently using streaming.
 
-Supported timeframes: 1s, 1m, 5m, 15m, 1h, 4h
+Supported timeframes: 1s, 1m, 5m, 15m, 1h, 4h, 1d
 """
 
 import csv
@@ -23,7 +23,8 @@ class TickToOHLCVConverter:
         '5m': 300,
         '15m': 900,
         '1h': 3600,
-        '4h': 14400
+        '4h': 14400,
+        '1d': 86400
     }
     
     def __init__(self, timeframe: str, chunk_size: int = 100000):
@@ -162,7 +163,7 @@ def main():
         description='Convert tick data to OHLCV format with multiple timeframe support',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Supported timeframes: 1s, 1m, 5m, 15m, 1h, 4h
+Supported timeframes: 1s, 1m, 5m, 15m, 1h, 4h, 1d
 
 Examples:
   # Convert to 1-minute candles
@@ -178,7 +179,7 @@ Examples:
     
     parser.add_argument('input_file', type=str, help='Path to input tick data CSV file')
     parser.add_argument('-t', '--timeframe', type=str, required=True,
-                        choices=['1s', '1m', '5m', '15m', '1h', '4h'],
+                        choices=['1s', '1m', '5m', '15m', '1h', '4h', '1d'],
                         help='Target timeframe for OHLCV conversion')
     parser.add_argument('-o', '--output', type=str, help='Output file path (default: input_file with timeframe suffix)')
     parser.add_argument('--chunk-size', type=int, default=100000, 
