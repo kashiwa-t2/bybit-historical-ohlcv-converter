@@ -4,6 +4,8 @@ Simple crypto data downloader for Bybit tick data.
 
 Usage:
     python download.py BTCUSDT 2024-01-01 2024-01-31
+    python download.py BTCUSDT 2024-01-01 2024-01-31 -t 5m
+    python download.py BTCUSDT 2024-01-01 2024-01-31 --timeframe 1h
 """
 import argparse
 import gzip
@@ -22,11 +24,17 @@ from urllib.error import URLError, HTTPError
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Download and convert Bybit tick data to 1-second OHLCV"
+        description="Download and convert Bybit tick data to OHLCV format"
     )
     parser.add_argument("symbol", help="Trading symbol (e.g., BTCUSDT)")
     parser.add_argument("start_date", help="Start date (YYYY-MM-DD)")
     parser.add_argument("end_date", help="End date (YYYY-MM-DD)")
+    parser.add_argument(
+        "-t", "--timeframe",
+        default="1s",
+        choices=["1s", "1m", "5m", "15m", "1h", "4h"],
+        help="Target timeframe for OHLCV conversion (default: 1s)"
+    )
     parser.add_argument(
         "--output-dir",
         default="data",
@@ -147,7 +155,7 @@ def decompress_file(gz_path: Path, csv_path: Path) -> bool:
         return False
 
 
-def convert_to_ohlcv(csv_path: Path, output_path: Path) -> bool:
+def convert_to_ohlcv(csv_path: Path, output_path: Path, timeframe: str = "1s") -> bool:
     """
     Convert tick data to 1-second OHLCV using existing script.
     
@@ -155,10 +163,11 @@ def convert_to_ohlcv(csv_path: Path, output_path: Path) -> bool:
         True if successful, False otherwise
     """
     try:
-        print(f"    Converting to OHLCV... ", end="", flush=True)
+        print(f"    Converting to {timeframe} OHLCV... ", end="", flush=True)
         
         # Get path to conversion script
-        script_path = Path(__file__).parent / "scripts" / "convert_to_1sec_ohlcv.py"
+        # Use the multi-timeframe script for all conversions
+        script_path = Path(__file__).parent / "scripts" / "convert_to_ohlcv.py"
         
         if not script_path.exists():
             print(f"Failed! Conversion script not found: {script_path}")
@@ -169,6 +178,7 @@ def convert_to_ohlcv(csv_path: Path, output_path: Path) -> bool:
             sys.executable,
             str(script_path),
             str(csv_path),
+            "-t", timeframe,
             "-o", str(output_path),
             "--chunk-size", "100000"
         ]
@@ -193,7 +203,7 @@ def convert_to_ohlcv(csv_path: Path, output_path: Path) -> bool:
         return False
 
 
-def process_date(symbol: str, date: datetime, output_dir: Path, max_retries: int) -> bool:
+def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, max_retries: int) -> bool:
     """
     Process a single date: download and convert.
     
@@ -206,7 +216,7 @@ def process_date(symbol: str, date: datetime, output_dir: Path, max_retries: int
     symbol_dir = output_dir / symbol
     symbol_dir.mkdir(parents=True, exist_ok=True)
     
-    output_file = symbol_dir / f"{symbol}_{date_str}_1sec.csv"
+    output_file = symbol_dir / f"{symbol}_{date_str}_{timeframe}.csv"
     
     # Check if already exists
     if output_file.exists():
@@ -231,7 +241,7 @@ def process_date(symbol: str, date: datetime, output_dir: Path, max_retries: int
             return False
         
         # Convert
-        if not convert_to_ohlcv(csv_file, output_file):
+        if not convert_to_ohlcv(csv_file, output_file, timeframe):
             return False
         
         # Cleanup temporary files
@@ -291,7 +301,7 @@ def main():
             date_str = date.strftime("%Y-%m-%d")
             print(f"[{i}/{total_days}] {date_str}:")
             
-            if process_date(symbol, date, output_dir, args.max_retries):
+            if process_date(symbol, date, output_dir, args.timeframe, args.max_retries):
                 success_count += 1
             else:
                 failed_dates.append(date_str)

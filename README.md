@@ -1,11 +1,11 @@
 # Crypto Data Fetcher
 
-Bybitの公開データから仮想通貨のティックデータをダウンロードし、1秒足OHLCVデータに変換するシンプルなツールです。
+Bybitの公開データから仮想通貨のティックデータをダウンロードし、複数の時間足でOHLCVデータに変換するシンプルなツールです。
 
 ## 機能
 
 - 📥 **自動ダウンロード**: Bybitからティックデータ（.csv.gz）を自動ダウンロード
-- 🔄 **データ変換**: ティックデータを1秒足OHLCV形式に変換
+- 🔄 **データ変換**: ティックデータを複数の時間足（1秒、1分、5分、15分、1時間、4時間）のOHLCV形式に変換
 - ✅ **重複スキップ**: 既にダウンロード済みのファイルは自動的にスキップ
 - 🔁 **自動リトライ**: エラー時の自動リトライ（最大3回）
 - 📊 **進捗表示**: 処理状況をリアルタイムで表示
@@ -39,14 +39,20 @@ pip install -r requirements.txt
 source venv/bin/activate  # macOS/Linux
 # venv\Scripts\activate  # Windows
 
-# 基本的な使い方
+# 基本的な使い方（デフォルトは1秒足）
 python download.py BTCUSDT 2024-01-01 2024-01-31
 
+# 5分足データを作成
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t 5m
+
+# 1時間足データを作成
+python download.py BTCUSDT 2024-01-01 2024-01-31 --timeframe 1h
+
 # 出力ディレクトリを指定
-python download.py BTCUSDT 2024-01-01 2024-01-31 --output-dir /path/to/data
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t 15m --output-dir /path/to/data
 
 # リトライ回数を変更
-python download.py BTCUSDT 2024-01-01 2024-01-31 --max-retries 5
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t 4h --max-retries 5
 
 # 使用後は仮想環境を無効化
 deactivate
@@ -57,6 +63,7 @@ deactivate
 - `symbol`: 取引ペア（例：BTCUSDT, ETHUSDT, BTCPERP, ETHUSD）
 - `start_date`: 開始日（YYYY-MM-DD形式）
 - `end_date`: 終了日（YYYY-MM-DD形式）
+- `-t, --timeframe`: 時間足（1s, 1m, 5m, 15m, 1h, 4h）（デフォルト：1s）
 - `--output-dir`: 出力ディレクトリ（デフォルト：data）
 - `--max-retries`: ダウンロード失敗時の最大リトライ回数（デフォルト：3）
 
@@ -67,8 +74,11 @@ deactivate
 ```
 data/
 └── BTCUSDT/
-    ├── BTCUSDT_2024-01-01_1sec.csv
-    ├── BTCUSDT_2024-01-02_1sec.csv
+    ├── BTCUSDT_2024-01-01_1s.csv
+    ├── BTCUSDT_2024-01-01_5m.csv
+    ├── BTCUSDT_2024-01-01_1h.csv
+    ├── BTCUSDT_2024-01-02_1s.csv
+    ├── BTCUSDT_2024-01-02_5m.csv
     └── ...
 ```
 
@@ -103,7 +113,12 @@ python download.py BTCUSDT 2024-01-01 2024-01-31
 既にダウンロード済みのティックデータを変換する場合：
 
 ```bash
+# 1秒足に変換（後方互換性のため残っています）
 python scripts/convert_to_1sec_ohlcv.py input.csv -o output_1sec.csv
+
+# 複数の時間足に対応した新しいスクリプト
+python scripts/convert_to_ohlcv.py input.csv -t 5m -o output_5m.csv
+python scripts/convert_to_ohlcv.py input.csv -t 1h -o output_1h.csv
 ```
 
 ## ライセンス

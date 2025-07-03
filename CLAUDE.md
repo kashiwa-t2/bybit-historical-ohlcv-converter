@@ -48,14 +48,20 @@ pip install -r requirements.txt
 ### 基本的な使用例
 ```bash
 # 仮想環境が有効化されている状態で実行
-# 1ヶ月分のデータをダウンロード
+# 1ヶ月分のデータをダウンロード（デフォルトは1秒足）
 python download.py BTCUSDT 2024-01-01 2024-01-31
 
-# 特定の日付のみ
-python download.py BTCUSDT 2024-01-15 2024-01-15
+# 5分足データを作成
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t 5m
+
+# 1時間足データを作成
+python download.py BTCUSDT 2024-01-01 2024-01-31 --timeframe 1h
+
+# 特定の日付のみ（4時間足）
+python download.py BTCUSDT 2024-01-15 2024-01-15 -t 4h
 
 # カスタム出力ディレクトリ
-python download.py BTCUSDT 2024-01-01 2024-01-31 --output-dir /path/to/data
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t 15m --output-dir /path/to/data
 
 # 使用後は仮想環境を無効化
 deactivate
