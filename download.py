@@ -3,32 +3,402 @@
 Simple crypto data downloader for Bybit tick data.
 
 Usage:
-    python download.py BTCUSDT 2024-01-01 2024-01-31
-    python download.py BTCUSDT 2024-01-01 2024-01-31 -t 5m
-    python download.py BTCUSDT 2024-01-01 2024-01-31 --timeframe 1h
+    python download.py BTCUSDT --full -t all
+    python download.py BTCUSDT --start 2024-01-01 --end 2024-01-31
+    python download.py BTCUSDT --start 2024-01-01
+    python download.py BTCUSDT --end 2024-01-31
 """
 import argparse
 import gzip
-import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
+
+
+def interactive_mode():
+    """Interactive mode for easier usage."""
+    print("=" * 50)
+    print("  Bybit Historical Data Downloader")
+    print("=" * 50)
+    print()
+    
+    # Get symbol
+    while True:
+        symbol = input("取引ペアを入力してください (例: BTCUSDT): ").strip().upper()
+        if symbol:
+            break
+        print("取引ペアを入力してください。")
+    
+    try:
+        symbol = validate_symbol(symbol)
+    except ValueError as e:
+        print(f"エラー: {e}")
+        return 1
+    
+    # Get date range option
+    print("\n日付範囲を選択してください:")
+    print("  [1] 全期間をダウンロード")
+    print("  [2] 特定の期間を指定")
+    print("  [3] 開始日から最新まで")
+    print("  [4] 最古から終了日まで")
+    
+    while True:
+        choice = input("選択 [1]: ").strip() or "1"
+        if choice in ["1", "2", "3", "4"]:
+            break
+        print("1-4の数字を入力してください。")
+    
+    # Handle date range based on choice
+    start_date = None
+    end_date = None
+    
+    if choice == "1":
+        # Full range
+        print("    全期間の日付範囲を取得中...")
+        earliest_available, latest_available = fetch_available_date_range(symbol)
+        if earliest_available is None or latest_available is None:
+            print(f"エラー: {symbol} の利用可能期間を取得できませんでした。")
+            print(f"https://public.bybit.com/trading/{symbol} を確認してください。")
+            return 1
+        start_date = earliest_available
+        end_date = latest_available
+        date_desc = f"全期間 ({start_date.date()} ～ {end_date.date()})"
+        
+    elif choice == "2":
+        # Specific range
+        while True:
+            start_str = input("開始日を入力してください (YYYY-MM-DD): ").strip()
+            try:
+                start_date = parse_date(start_str)
+                break
+            except ValueError:
+                print("正しい日付形式で入力してください (YYYY-MM-DD)")
+        
+        while True:
+            end_str = input("終了日を入力してください (YYYY-MM-DD): ").strip()
+            try:
+                end_date = parse_date(end_str)
+                break
+            except ValueError:
+                print("正しい日付形式で入力してください (YYYY-MM-DD)")
+        
+        if start_date > end_date:
+            print("エラー: 開始日は終了日より前である必要があります。")
+            return 1
+        
+        date_desc = f"{start_date.date()} ～ {end_date.date()}"
+        
+    elif choice == "3":
+        # From start date to latest
+        while True:
+            start_str = input("開始日を入力してください (YYYY-MM-DD): ").strip()
+            try:
+                start_date = parse_date(start_str)
+                break
+            except ValueError:
+                print("正しい日付形式で入力してください (YYYY-MM-DD)")
+        
+        print("    最新日付を取得中...")
+        _, latest_available = fetch_available_date_range(symbol)
+        if latest_available is None:
+            print(f"エラー: {symbol} の利用可能期間を取得できませんでした。")
+            return 1
+        end_date = latest_available
+        date_desc = f"{start_date.date()} ～ 最新 ({end_date.date()})"
+        
+    elif choice == "4":
+        # From earliest to end date
+        while True:
+            end_str = input("終了日を入力してください (YYYY-MM-DD): ").strip()
+            try:
+                end_date = parse_date(end_str)
+                break
+            except ValueError:
+                print("正しい日付形式で入力してください (YYYY-MM-DD)")
+        
+        print("    最古日付を取得中...")
+        earliest_available, _ = fetch_available_date_range(symbol)
+        if earliest_available is None:
+            print(f"エラー: {symbol} の利用可能期間を取得できませんでした。")
+            return 1
+        start_date = earliest_available
+        date_desc = f"最古 ({start_date.date()}) ～ {end_date.date()}"
+    
+    # Get timeframe option
+    print("\n時間足を選択してください:")
+    print("  [1] 全ての時間足 (1s, 1m, 5m, 15m, 1h, 4h, 1d)")
+    print("  [2] カスタム選択")
+    
+    while True:
+        tf_choice = input("選択 [1]: ").strip() or "1"
+        if tf_choice in ["1", "2"]:
+            break
+        print("1-2の数字を入力してください。")
+    
+    if tf_choice == "1":
+        timeframe = "all"
+        tf_desc = "全ての時間足 (1s, 1m, 5m, 15m, 1h, 4h, 1d)"
+    elif tf_choice == "2":
+        print("\n利用可能な時間足 (複数選択可能):")
+        timeframes = ["1s", "1m", "5m", "15m", "1h", "4h", "1d"]
+        for i, tf in enumerate(timeframes, 1):
+            print(f"  [{i}] {tf}")
+        
+        selected_timeframes = []
+        print("\n番号を入力してください (例: 1,3,5 または 1 3 5)")
+        print("完了したらEnterキーを押してください")
+        
+        while True:
+            selection = input("選択: ").strip()
+            if not selection:
+                if selected_timeframes:
+                    break
+                else:
+                    print("少なくとも1つの時間足を選択してください。")
+                    continue
+            
+            try:
+                # Parse comma-separated or space-separated numbers
+                if ',' in selection:
+                    numbers = [int(x.strip()) for x in selection.split(',')]
+                else:
+                    numbers = [int(x.strip()) for x in selection.split()]
+                
+                valid_selections = []
+                for num in numbers:
+                    if 1 <= num <= len(timeframes):
+                        tf = timeframes[num - 1]
+                        if tf not in selected_timeframes:
+                            selected_timeframes.append(tf)
+                            valid_selections.append(tf)
+                    else:
+                        print(f"無効な番号: {num} (1-{len(timeframes)}の範囲で入力してください)")
+                
+                if valid_selections:
+                    print(f"追加されました: {', '.join(valid_selections)}")
+                    print(f"現在の選択: {', '.join(selected_timeframes)}")
+                
+            except ValueError:
+                print("数字を入力してください (例: 1,3,5 または 1 3 5)")
+        
+        if len(selected_timeframes) == 1:
+            timeframe = selected_timeframes[0]
+            tf_desc = selected_timeframes[0]
+        else:
+            # For multiple timeframes, we'll process them as individual downloads
+            timeframe = "custom_multiple"
+            tf_desc = f"カスタム選択 ({', '.join(selected_timeframes)})"
+    
+    # Get output directory
+    output_dir = input(f"\n出力ディレクトリ [data]: ").strip() or "data"
+    
+    # Confirmation
+    print("\n" + "=" * 30)
+    print("  設定確認")
+    print("=" * 30)
+    print(f"取引ペア: {symbol}")
+    print(f"期間: {date_desc}")
+    print(f"時間足: {tf_desc}")
+    print(f"出力先: {output_dir}/")
+    print()
+    
+    confirm = input("この設定で実行しますか？ [Y/n]: ").strip().lower()
+    if confirm and confirm not in ["y", "yes"]:
+        print("処理をキャンセルしました。")
+        return 0
+    
+    # Execute download
+    print("\nダウンロードを開始します...")
+    print()
+    
+    # Call the main download logic
+    if timeframe == "custom_multiple":
+        return execute_download(symbol, start_date, end_date, timeframe, output_dir, max_retries=3, custom_timeframes=selected_timeframes)
+    else:
+        return execute_download(symbol, start_date, end_date, timeframe, output_dir, max_retries=3)
+
+
+def execute_download(symbol: str, start_date: datetime, end_date: datetime, timeframe: str, output_dir: str, max_retries: int = 3, custom_timeframes: list = None) -> int:
+    """Execute the download process with the given parameters."""
+    try:
+        # Check for future dates
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        if end_date > today:
+            print(f"Warning: Cannot download future data. Adjusting end date to today.")
+            end_date = today
+        
+        if start_date > end_date:
+            print("Error: Start date must be before or equal to end date")
+            return 1
+        
+        # Setup output directory
+        output_dir_path = Path(output_dir)
+        
+        # Process each date
+        dates = list(generate_dates(start_date, end_date))
+        total_days = len(dates)
+        
+        print(f"\nProcessing {symbol} from {start_date.date()} to {end_date.date()}...")
+        print(f"Total days: {total_days}\n")
+        
+        success_count = 0
+        failed_dates = []
+        consecutive_failures = 0
+        
+        for i, date in enumerate(dates, 1):
+            date_str = date.strftime("%Y-%m-%d")
+            print(f"[{i}/{total_days}] {date_str}:")
+            
+            if process_date(symbol, date, output_dir_path, timeframe, max_retries, custom_timeframes):
+                success_count += 1
+                consecutive_failures = 0  # Reset consecutive failure counter
+            else:
+                failed_dates.append(date_str)
+                consecutive_failures += 1
+                
+                # Check for too many consecutive failures
+                if consecutive_failures >= 3:
+                    print(f"\n⚠️  3日連続でデータが見つかりませんでした。")
+                    print(f"   対象の取引ペア '{symbol}' のデータが利用可能か確認してください:")
+                    print(f"   https://public.bybit.com/trading/{symbol}")
+                    print(f"\n   処理を中止します。")
+                    break
+        
+        # Summary
+        print(f"\n{'='*50}")
+        print(f"Summary:")
+        print(f"  Total days: {total_days}")
+        print(f"  Successful: {success_count}")
+        print(f"  Failed: {len(failed_dates)}")
+        
+        if failed_dates:
+            print(f"\nFailed dates:")
+            for date_str in failed_dates:
+                print(f"  - {date_str}")
+            print(f"\nTo retry failed dates, run:")
+            print(f"  python download.py --start {failed_dates[0]} --end {failed_dates[-1]}")
+        else:
+            print(f"\nAll downloads completed successfully!")
+        
+        return 0 if not failed_dates else 1
+        
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+        return 1
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return 1
+
+
+def fetch_available_date_range(symbol: str) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """
+    Fetch the available date range for a symbol from Bybit public data.
+    
+    Returns:
+        Tuple of (earliest_date, latest_date) or (None, None) if failed
+    """
+    try:
+        url = f"https://public.bybit.com/trading/{symbol}/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; BybitHistoricalOHLCVConverter/1.0)"
+        }
+        
+        print(f"    Checking available date range for {symbol}... ", end="", flush=True)
+        
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=30) as response:
+            html_content = response.read().decode('utf-8')
+        
+        # Extract file names matching the pattern: SYMBOL[YYYY-MM-DD].csv.gz
+        pattern = rf'{re.escape(symbol)}\[(\d{{4}}-\d{{2}}-\d{{2}})\]\.csv\.gz'
+        matches = re.findall(pattern, html_content)
+        
+        if not matches:
+            print("No data files found!")
+            return None, None
+        
+        # Parse dates and find min/max
+        dates = []
+        for date_str in matches:
+            try:
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                dates.append(date_obj)
+            except ValueError:
+                continue
+        
+        if not dates:
+            print("No valid dates found!")
+            return None, None
+        
+        earliest_date = min(dates)
+        latest_date = max(dates)
+        
+        print(f"Found {len(dates)} files ({earliest_date.date()} to {latest_date.date()})")
+        return earliest_date, latest_date
+        
+    except Exception as e:
+        print(f"Failed to fetch date range: {e}")
+        return None, None
 
 
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Download and convert Bybit tick data to OHLCV format"
+        description="Download and convert Bybit tick data to OHLCV format",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Download full available range
+  python download.py BTCUSDT --full
+
+  # Download specific date range
+  python download.py BTCUSDT --start 2024-01-01 --end 2024-01-31
+
+  # Download from start date to latest
+  python download.py BTCUSDT --start 2024-01-01
+
+  # Download from earliest to end date
+  python download.py BTCUSDT --end 2024-01-31
+
+  # Download with all timeframes
+  python download.py BTCUSDT --full -t all
+        """
     )
+    
+    # Required positional argument
     parser.add_argument("symbol", help="Trading symbol (e.g., BTCUSDT)")
-    parser.add_argument("start_date", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("end_date", help="End date (YYYY-MM-DD)")
+    
+    # Date range options (mutually exclusive groups)
+    date_group = parser.add_mutually_exclusive_group()
+    date_group.add_argument(
+        "--full",
+        action="store_true",
+        help="Download all available data for the symbol (auto-detect date range)"
+    )
+    
+    # When not using --full, can specify start/end independently
+    parser.add_argument(
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="Start date. If not specified with --end, downloads from earliest available"
+    )
+    parser.add_argument(
+        "--end", 
+        metavar="YYYY-MM-DD",
+        help="End date. If not specified with --start, downloads to latest available"
+    )
+    
+    # Other options
     parser.add_argument(
         "-t", "--timeframe",
         default="1m",
@@ -202,7 +572,7 @@ def convert_to_ohlcv(csv_path: Path, output_path: Path, timeframe: str = "1m") -
         return False
 
 
-def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, max_retries: int) -> bool:
+def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, max_retries: int, custom_timeframes: list = None) -> bool:
     """
     Process a single date: download and convert.
     
@@ -218,6 +588,8 @@ def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
     # Determine timeframes to process
     if timeframe == "all":
         timeframes = ["1s", "1m", "5m", "15m", "1h", "4h", "1d"]
+    elif timeframe == "custom_multiple":
+        timeframes = custom_timeframes or ["1m"]
     else:
         timeframes = [timeframe]
     
@@ -284,68 +656,67 @@ def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
 
 def main():
     """Main entry point."""
+    # Check if we should enter interactive mode
+    if len(sys.argv) == 1:
+        # No arguments provided - enter interactive mode
+        return interactive_mode()
+    
+    # Parse arguments for CLI mode
     args = parse_arguments()
+    
+    # Check if only symbol is provided without date options - suggest interactive mode
+    if not (args.full or args.start or args.end):
+        print("Tip: Run 'python download.py' without arguments for interactive mode")
+        print()
+        print("Error: Please specify date range using one of:")
+        print("  --full                           (download all available data)")
+        print("  --start YYYY-MM-DD --end YYYY-MM-DD  (specific range)")
+        print("  --start YYYY-MM-DD               (from date to latest)")
+        print("  --end YYYY-MM-DD                 (from earliest to date)")
+        return 1
     
     try:
         # Validate inputs
         symbol = validate_symbol(args.symbol)
-        start_date = parse_date(args.start_date)
-        end_date = parse_date(args.end_date)
         
-        if start_date > end_date:
-            print("Error: Start date must be before or equal to end date")
-            return 1
-        
-        # Check date ranges
-        earliest_date = datetime(2020, 3, 25)
-        if start_date < earliest_date:
-            print(f"Warning: Bybit data starts from 2020-03-25. Adjusting start date.")
-            start_date = earliest_date
-        
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        if end_date > today:
-            print(f"Warning: Cannot download future data. Adjusting end date to today.")
-            end_date = today
-        
-        # Setup output directory
-        output_dir = Path(args.output_dir)
-        
-        # Process each date
-        dates = list(generate_dates(start_date, end_date))
-        total_days = len(dates)
-        
-        print(f"\nProcessing {symbol} from {start_date.date()} to {end_date.date()}...")
-        print(f"Total days: {total_days}\n")
-        
-        success_count = 0
-        failed_dates = []
-        
-        for i, date in enumerate(dates, 1):
-            date_str = date.strftime("%Y-%m-%d")
-            print(f"[{i}/{total_days}] {date_str}:")
+        # Handle date range logic
+        if args.full:
+            # Full range: fetch all available data
+            earliest_available, latest_available = fetch_available_date_range(symbol)
+            if earliest_available is None or latest_available is None:
+                print("Error: Could not determine available date range for this symbol")
+                print(f"Please check https://public.bybit.com/trading/{symbol} and specify dates manually")
+                return 1
             
-            if process_date(symbol, date, output_dir, args.timeframe, args.max_retries):
-                success_count += 1
-            else:
-                failed_dates.append(date_str)
+            start_date = earliest_available
+            end_date = latest_available
+            print(f"Using full available range: {start_date.date()} to {end_date.date()}")
+            
+        elif args.start or args.end:
+            # Partial range: fetch available range if needed
+            if not args.start or not args.end:
+                print("Fetching available date range to determine missing dates...")
+                earliest_available, latest_available = fetch_available_date_range(symbol)
+                if earliest_available is None or latest_available is None:
+                    print("Error: Could not determine available date range for this symbol")
+                    print(f"Please check https://public.bybit.com/trading/{symbol}")
+                    return 1
+            
+            # Use provided dates or fall back to available range
+            start_date = parse_date(args.start) if args.start else earliest_available
+            end_date = parse_date(args.end) if args.end else latest_available
+            
+            # Ensure dates are within available range if we fetched them
+            if not args.start or not args.end:
+                if start_date < earliest_available:
+                    print(f"Warning: Start date {start_date.date()} is before available data ({earliest_available.date()}). Using {earliest_available.date()}.")
+                    start_date = earliest_available
+                if end_date > latest_available:
+                    print(f"Warning: End date {end_date.date()} is after available data ({latest_available.date()}). Using {latest_available.date()}.")
+                    end_date = latest_available
         
-        # Summary
-        print(f"\n{'='*50}")
-        print(f"Summary:")
-        print(f"  Total days: {total_days}")
-        print(f"  Successful: {success_count}")
-        print(f"  Failed: {len(failed_dates)}")
-        
-        if failed_dates:
-            print(f"\nFailed dates:")
-            for date_str in failed_dates:
-                print(f"  - {date_str}")
-            print(f"\nTo retry failed dates, run:")
-            print(f"  python download.py {symbol} {failed_dates[0]} {failed_dates[-1]}")
-        else:
-            print(f"\nAll downloads completed successfully!")
-        
-        return 0 if not failed_dates else 1
+        # Execute download
+        return execute_download(symbol, start_date, end_date, args.timeframe, args.output_dir, args.max_retries)
         
     except ValueError as e:
         print(f"Error: {e}")
