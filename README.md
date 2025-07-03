@@ -39,20 +39,21 @@ pip install -r requirements.txt
 source venv/bin/activate  # macOS/Linux
 # venv\Scripts\activate  # Windows
 
-# 基本的な使い方（デフォルトは1秒足）
+# 基本的な使い方（デフォルトは1分足）
 python download.py BTCUSDT 2024-01-01 2024-01-31
 
-# 5分足データを作成
-python download.py BTCUSDT 2024-01-01 2024-01-31 -t 5m
+# 全ての時間足を一度に作成（1s, 1m, 5m, 15m, 1h, 4h）
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t all
 
-# 1時間足データを作成
+# 特定の時間足のみ作成
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t 5m
 python download.py BTCUSDT 2024-01-01 2024-01-31 --timeframe 1h
 
-# 出力ディレクトリを指定
-python download.py BTCUSDT 2024-01-01 2024-01-31 -t 15m --output-dir /path/to/data
+# 出力ディレクトリを指定して全時間足を作成
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t all --output-dir /path/to/data
 
 # リトライ回数を変更
-python download.py BTCUSDT 2024-01-01 2024-01-31 -t 4h --max-retries 5
+python download.py BTCUSDT 2024-01-01 2024-01-31 --max-retries 5
 
 # 使用後は仮想環境を無効化
 deactivate
@@ -63,7 +64,7 @@ deactivate
 - `symbol`: 取引ペア（例：BTCUSDT, ETHUSDT, BTCPERP, ETHUSD）
 - `start_date`: 開始日（YYYY-MM-DD形式）
 - `end_date`: 終了日（YYYY-MM-DD形式）
-- `-t, --timeframe`: 時間足（1s, 1m, 5m, 15m, 1h, 4h）（デフォルト：1s）
+- `-t, --timeframe`: 時間足（1s, 1m, 5m, 15m, 1h, 4h, all）（デフォルト：1m）
 - `--output-dir`: 出力ディレクトリ（デフォルト：data）
 - `--max-retries`: ダウンロード失敗時の最大リトライ回数（デフォルト：3）
 
@@ -113,10 +114,7 @@ python download.py BTCUSDT 2024-01-01 2024-01-31
 既にダウンロード済みのティックデータを変換する場合：
 
 ```bash
-# 1秒足に変換（後方互換性のため残っています）
-python scripts/convert_to_1sec_ohlcv.py input.csv -o output_1sec.csv
-
-# 複数の時間足に対応した新しいスクリプト
+# 特定の時間足に変換
 python scripts/convert_to_ohlcv.py input.csv -t 5m -o output_5m.csv
 python scripts/convert_to_ohlcv.py input.csv -t 1h -o output_1h.csv
 ```

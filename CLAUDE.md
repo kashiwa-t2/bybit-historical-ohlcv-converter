@@ -4,11 +4,11 @@
 
 ## 🎯 プロジェクト概要
 
-**Crypto Data Fetcher** - Bybitの公開データから仮想通貨のティックデータをダウンロードし、1秒足OHLCVに変換するシンプルなツール
+**Crypto Data Fetcher** - Bybitの公開データから仮想通貨のティックデータをダウンロードし、複数の時間足（1秒、1分、5分、15分、1時間、4時間）のOHLCVに変換するシンプルなツール。全時間足を一度に出力することも可能
 
 ### 主な目標
 1. 指定した銘柄と期間のティックデータをダウンロード
-2. 1秒足OHLCV形式に変換
+2. 複数の時間足でOHLCV形式に変換（1s, 1m, 5m, 15m, 1h, 4h）
 3. 銘柄ごとにフォルダ分けして保存
 4. 重複ダウンロードの防止
 5. エラー時の自動リトライ
@@ -19,10 +19,11 @@
 crypto-data-fetcher/
 ├── download.py                  # メインスクリプト
 ├── scripts/
-│   └── convert_to_1sec_ohlcv.py # ティック→OHLCV変換スクリプト
+│   └── convert_to_ohlcv.py      # 複数時間足対応の変換スクリプト
 ├── data/                        # 出力ディレクトリ
 │   └── BTCUSDT/                # 銘柄ごとのフォルダ
-│       ├── BTCUSDT_2024-01-01_1sec.csv
+│       ├── BTCUSDT_2024-01-01_1s.csv
+│       ├── BTCUSDT_2024-01-01_5m.csv
 │       └── temp/               # 一時ファイル用
 ├── venv/                        # 仮想環境（.gitignoreで除外）
 ├── requirements.txt             # 最小限の依存関係
@@ -48,20 +49,21 @@ pip install -r requirements.txt
 ### 基本的な使用例
 ```bash
 # 仮想環境が有効化されている状態で実行
-# 1ヶ月分のデータをダウンロード（デフォルトは1秒足）
+# 1ヶ月分のデータをダウンロード（デフォルトは1分足）
 python download.py BTCUSDT 2024-01-01 2024-01-31
 
-# 5分足データを作成
-python download.py BTCUSDT 2024-01-01 2024-01-31 -t 5m
+# 全ての時間足を一度に作成（1s, 1m, 5m, 15m, 1h, 4h）
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t all
 
-# 1時間足データを作成
+# 特定の時間足のみ作成
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t 5m
 python download.py BTCUSDT 2024-01-01 2024-01-31 --timeframe 1h
 
-# 特定の日付のみ（4時間足）
-python download.py BTCUSDT 2024-01-15 2024-01-15 -t 4h
+# 特定の日付で全時間足を作成
+python download.py BTCUSDT 2024-01-15 2024-01-15 -t all
 
 # カスタム出力ディレクトリ
-python download.py BTCUSDT 2024-01-01 2024-01-31 -t 15m --output-dir /path/to/data
+python download.py BTCUSDT 2024-01-01 2024-01-31 -t all --output-dir /path/to/data
 
 # 使用後は仮想環境を無効化
 deactivate

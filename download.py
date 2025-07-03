@@ -31,9 +31,9 @@ def parse_arguments():
     parser.add_argument("end_date", help="End date (YYYY-MM-DD)")
     parser.add_argument(
         "-t", "--timeframe",
-        default="1s",
-        choices=["1s", "1m", "5m", "15m", "1h", "4h"],
-        help="Target timeframe for OHLCV conversion (default: 1s)"
+        default="1m",
+        choices=["1s", "1m", "5m", "15m", "1h", "4h", "all"],
+        help="Target timeframe for OHLCV conversion (default: 1m). Use 'all' to generate all timeframes."
     )
     parser.add_argument(
         "--output-dir",
@@ -155,9 +155,9 @@ def decompress_file(gz_path: Path, csv_path: Path) -> bool:
         return False
 
 
-def convert_to_ohlcv(csv_path: Path, output_path: Path, timeframe: str = "1s") -> bool:
+def convert_to_ohlcv(csv_path: Path, output_path: Path, timeframe: str = "1m") -> bool:
     """
-    Convert tick data to 1-second OHLCV using existing script.
+    Convert tick data to OHLCV format.
     
     Returns:
         True if successful, False otherwise
@@ -166,7 +166,6 @@ def convert_to_ohlcv(csv_path: Path, output_path: Path, timeframe: str = "1s") -
         print(f"    Converting to {timeframe} OHLCV... ", end="", flush=True)
         
         # Get path to conversion script
-        # Use the multi-timeframe script for all conversions
         script_path = Path(__file__).parent / "scripts" / "convert_to_ohlcv.py"
         
         if not script_path.exists():
@@ -216,11 +215,22 @@ def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
     symbol_dir = output_dir / symbol
     symbol_dir.mkdir(parents=True, exist_ok=True)
     
-    output_file = symbol_dir / f"{symbol}_{date_str}_{timeframe}.csv"
+    # Determine timeframes to process
+    if timeframe == "all":
+        timeframes = ["1s", "1m", "5m", "15m", "1h", "4h"]
+    else:
+        timeframes = [timeframe]
     
-    # Check if already exists
-    if output_file.exists():
-        print(f"    Already exists, skipping")
+    # Check if all required files exist
+    all_exist = True
+    for tf in timeframes:
+        output_file = symbol_dir / f"{symbol}_{date_str}_{tf}.csv"
+        if not output_file.exists():
+            all_exist = False
+            break
+    
+    if all_exist:
+        print(f"    All required files already exist, skipping")
         return True
     
     # Temporary files
@@ -231,31 +241,44 @@ def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
     csv_file = temp_dir / f"{symbol}{date_str}.csv"
     
     try:
-        # Download
-        url = build_download_url(symbol, date)
-        if not download_file(url, gz_file, max_retries):
-            return False
+        # Download only if CSV file doesn't exist
+        if not csv_file.exists():
+            # Download
+            url = build_download_url(symbol, date)
+            if not download_file(url, gz_file, max_retries):
+                return False
+            
+            # Decompress
+            if not decompress_file(gz_file, csv_file):
+                return False
+            
+            # Clean up gz file after decompression
+            gz_file.unlink(missing_ok=True)
+        else:
+            print(f"    Using existing CSV file")
         
-        # Decompress
-        if not decompress_file(gz_file, csv_file):
-            return False
+        # Convert to all required timeframes
+        success = True
+        for tf in timeframes:
+            output_file = symbol_dir / f"{symbol}_{date_str}_{tf}.csv"
+            if not output_file.exists():
+                if not convert_to_ohlcv(csv_file, output_file, tf):
+                    success = False
+                    break
         
-        # Convert
-        if not convert_to_ohlcv(csv_file, output_file, timeframe):
-            return False
-        
-        # Cleanup temporary files
-        gz_file.unlink(missing_ok=True)
+        # Cleanup temporary CSV file
         csv_file.unlink(missing_ok=True)
         
-        return True
+        return success
         
     except Exception as e:
         print(f"    Unexpected error: {e}")
         # Cleanup on error
         gz_file.unlink(missing_ok=True)
         csv_file.unlink(missing_ok=True)
-        output_file.unlink(missing_ok=True)
+        for tf in timeframes:
+            output_file = symbol_dir / f"{symbol}_{date_str}_{tf}.csv"
+            output_file.unlink(missing_ok=True)
         return False
 
 
