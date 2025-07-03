@@ -110,7 +110,6 @@ timestamp,datetime,open,high,low,close,volume,trades
 - **取引ペアの確認**: 使用前に https://public.bybit.com/trading/ で対象の取引ペアが利用可能であることを確認してください
 - データの利用可能期間は取引ペアによって異なります（例：BTCUSDT は 2020 年 3 月 25 日から）
 - 未来の日付は指定できません
-- 大量のデータをダウンロードする場合は、Bybit のサーバーに負荷をかけないよう適度な間隔を空けてください
 
 ## 🔧 エラーが発生した場合
 
