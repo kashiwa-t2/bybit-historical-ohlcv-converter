@@ -105,7 +105,7 @@ def download_file(url: str, output_path: Path, max_retries: int = 3) -> bool:
         True if successful, False otherwise
     """
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; CryptoDataFetcher/1.0)"
+        "User-Agent": "Mozilla/5.0 (compatible; BybitHistoricalOHLCVConverter/1.0)"
     }
     
     for attempt in range(max_retries):

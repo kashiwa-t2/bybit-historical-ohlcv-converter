@@ -1,13 +1,13 @@
-# Crypto Data Fetcher
+# Bybit Historical OHLCV Converter
 
-Bybitの公開データから仮想通貨のティックデータをダウンロードし、複数の時間足でOHLCVデータに変換するシンプルなツールです。
+Bybit の公開データから仮想通貨のティックデータをダウンロードし、複数の時間足で OHLCV データに変換するシンプルなツールです。
 
 ## 機能
 
-- 📥 **自動ダウンロード**: Bybitからティックデータ（.csv.gz）を自動ダウンロード
-- 🔄 **データ変換**: ティックデータを複数の時間足（1秒、1分、5分、15分、1時間、4時間、1日）のOHLCV形式に変換
+- 📥 **自動ダウンロード**: Bybit からティックデータ（.csv.gz）を自動ダウンロード
+- 🔄 **データ変換**: ティックデータを複数の時間足（1 秒、1 分、5 分、15 分、1 時間、4 時間、1 日）の OHLCV 形式に変換
 - ✅ **重複スキップ**: 既にダウンロード済みのファイルは自動的にスキップ
-- 🔁 **自動リトライ**: エラー時の自動リトライ（最大3回）
+- 🔁 **自動リトライ**: エラー時の自動リトライ（最大 3 回）
 - 📊 **進捗表示**: 処理状況をリアルタイムで表示
 
 ## インストール
@@ -15,7 +15,7 @@ Bybitの公開データから仮想通貨のティックデータをダウンロ
 ```bash
 # リポジトリのクローン
 git clone <repository_url>
-cd crypto-data-fetcher
+cd bybit-historical-ohlcv-converter
 
 # 仮想環境の作成（Python 3.8以上推奨）
 python3 -m venv venv
@@ -62,8 +62,8 @@ deactivate
 ### パラメータ
 
 - `symbol`: 取引ペア（例：BTCUSDT, ETHUSDT, BTCPERP, ETHUSD）
-- `start_date`: 開始日（YYYY-MM-DD形式）
-- `end_date`: 終了日（YYYY-MM-DD形式）
+- `start_date`: 開始日（YYYY-MM-DD 形式）
+- `end_date`: 終了日（YYYY-MM-DD 形式）
 - `-t, --timeframe`: 時間足（1s, 1m, 5m, 15m, 1h, 4h, 1d, all）（デフォルト：1m）
 - `--output-dir`: 出力ディレクトリ（デフォルト：data）
 - `--max-retries`: ダウンロード失敗時の最大リトライ回数（デフォルト：3）
@@ -83,7 +83,7 @@ data/
     └── ...
 ```
 
-### OHLCVデータ形式
+### OHLCV データ形式
 
 ```csv
 timestamp,datetime,open,high,low,close,volume,trades
@@ -93,9 +93,9 @@ timestamp,datetime,open,high,low,close,volume,trades
 
 ## 注意事項
 
-- Bybitのデータは2020年3月25日から利用可能です
+- Bybit のデータは 2020 年 3 月 25 日から利用可能です
 - 未来の日付は指定できません
-- 大量のデータをダウンロードする場合は、Bybitのサーバーに負荷をかけないよう適度な間隔を空けてください
+- 大量のデータをダウンロードする場合は、Bybit のサーバーに負荷をかけないよう適度な間隔を空けてください
 
 ## エラーが発生した場合
 
