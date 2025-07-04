@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Convert large tick data CSV files to OHLCV format with multiple timeframe support.
-Designed to handle very large files efficiently using streaming.
+Convert large tick data CSV files to OHLCV format with gap filling.
+Fills missing time intervals with previous close price and zero volume.
 
 Supported timeframes: 1s, 1m, 5m, 15m, 1h, 4h, 1d
 """
 
 import csv
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import argparse
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, List
 import math
 
 
@@ -27,33 +27,20 @@ class TickToOHLCVConverter:
         '1d': 86400
     }
     
-    def __init__(self, timeframe: str, chunk_size: int = 100000):
+    def __init__(self, timeframe: str):
         if timeframe not in self.TIMEFRAMES:
             raise ValueError(f"Unsupported timeframe: {timeframe}. Supported: {list(self.TIMEFRAMES.keys())}")
         
         self.timeframe = timeframe
         self.interval_seconds = self.TIMEFRAMES[timeframe]
-        self.chunk_size = chunk_size
-        self.current_interval = None
-        self.ohlcv_buffer = None
+        self.ticks_by_interval = {}  # Dictionary to store ticks grouped by interval
         
     def get_interval(self, timestamp: float) -> int:
         """Get the interval start timestamp for the given timestamp."""
         return int(math.floor(timestamp / self.interval_seconds) * self.interval_seconds)
-        
-    def reset_buffer(self):
-        """Reset the OHLCV buffer for a new interval."""
-        self.ohlcv_buffer = {
-            'open': None,
-            'high': float('-inf'),
-            'low': float('inf'),
-            'close': None,
-            'volume': 0.0,
-            'trades': 0
-        }
     
-    def process_tick(self, row: Dict[str, str]) -> Optional[Dict]:
-        """Process a single tick and return OHLCV data if interval is complete."""
+    def process_tick(self, row: Dict[str, str]):
+        """Store tick data grouped by interval."""
         # Handle different timestamp formats (seconds vs milliseconds)
         timestamp = float(row['timestamp'])
         if timestamp > 1e10:  # If timestamp is in milliseconds
@@ -66,119 +53,196 @@ class TickToOHLCVConverter:
         # Get the interval for this tick
         tick_interval = self.get_interval(timestamp)
         
-        # If this is a new interval, output the previous interval's data
-        result = None
-        if self.current_interval is not None and tick_interval != self.current_interval:
-            if self.ohlcv_buffer['open'] is not None:  # Ensure we have data
-                result = {
-                    'timestamp': self.current_interval,
-                    'datetime': datetime.fromtimestamp(self.current_interval).isoformat(),
-                    'open': self.ohlcv_buffer['open'],
-                    'high': self.ohlcv_buffer['high'],
-                    'low': self.ohlcv_buffer['low'],
-                    'close': self.ohlcv_buffer['close'],
-                    'volume': self.ohlcv_buffer['volume'],
-                    'trades': self.ohlcv_buffer['trades']
-                }
-            self.reset_buffer()
+        # Store tick data
+        if tick_interval not in self.ticks_by_interval:
+            self.ticks_by_interval[tick_interval] = []
         
-        # Update current interval
-        if self.current_interval != tick_interval:
-            self.current_interval = tick_interval
-            self.reset_buffer()
-        
-        # Update OHLCV data
-        if self.ohlcv_buffer['open'] is None:
-            self.ohlcv_buffer['open'] = price
-        
-        self.ohlcv_buffer['high'] = max(self.ohlcv_buffer['high'], price)
-        self.ohlcv_buffer['low'] = min(self.ohlcv_buffer['low'], price)
-        self.ohlcv_buffer['close'] = price
-        self.ohlcv_buffer['volume'] += size
-        self.ohlcv_buffer['trades'] += 1
-        
-        return result
+        self.ticks_by_interval[tick_interval].append({
+            'timestamp': timestamp,
+            'price': price,
+            'size': size
+        })
     
-    def get_final_candle(self) -> Optional[Dict]:
-        """Get the final candle data."""
-        if self.current_interval is not None and self.ohlcv_buffer['open'] is not None:
-            return {
-                'timestamp': self.current_interval,
-                'datetime': datetime.fromtimestamp(self.current_interval).isoformat(),
-                'open': self.ohlcv_buffer['open'],
-                'high': self.ohlcv_buffer['high'],
-                'low': self.ohlcv_buffer['low'],
-                'close': self.ohlcv_buffer['close'],
-                'volume': self.ohlcv_buffer['volume'],
-                'trades': self.ohlcv_buffer['trades']
-            }
-        return None
+    def get_ohlcv_for_interval(self, interval_timestamp: int, ticks: List[Dict]) -> Dict:
+        """Calculate OHLCV for a given interval from tick data."""
+        if not ticks:
+            return None
+            
+        # Sort ticks by timestamp
+        ticks = sorted(ticks, key=lambda x: x['timestamp'])
+        
+        open_price = ticks[0]['price']
+        close_price = ticks[-1]['price']
+        high_price = max(tick['price'] for tick in ticks)
+        low_price = min(tick['price'] for tick in ticks)
+        volume = sum(tick['size'] for tick in ticks)
+        trades = len(ticks)
+        
+        return {
+            'timestamp': interval_timestamp,
+            'datetime': datetime.fromtimestamp(interval_timestamp).isoformat(),
+            'open': open_price,
+            'high': high_price,
+            'low': low_price,
+            'close': close_price,
+            'volume': volume,
+            'trades': trades
+        }
+    
+    def generate_all_candles(self, start_time: int, end_time: int) -> List[Dict]:
+        """Generate all candles including gaps filled with previous close."""
+        candles = []
+        last_close = None
+        next_open = None
+        
+        # Find the first available data for initial gap filling
+        if self.ticks_by_interval:
+            first_interval = min(self.ticks_by_interval.keys())
+            if first_interval > start_time:
+                # We have a gap at the beginning
+                first_ticks = self.ticks_by_interval[first_interval]
+                if first_ticks:
+                    sorted_ticks = sorted(first_ticks, key=lambda x: x['timestamp'])
+                    next_open = sorted_ticks[0]['price']
+        
+        # Generate candle for each interval
+        current_time = start_time
+        while current_time <= end_time:
+            if current_time in self.ticks_by_interval:
+                # We have data for this interval
+                candle = self.get_ohlcv_for_interval(current_time, self.ticks_by_interval[current_time])
+                if candle:
+                    candles.append(candle)
+                    last_close = candle['close']
+            else:
+                # No data for this interval - fill the gap
+                if last_close is not None:
+                    # Use previous close
+                    fill_price = last_close
+                elif next_open is not None:
+                    # No previous data, use next open
+                    fill_price = next_open
+                else:
+                    # No data at all - skip this interval
+                    current_time += self.interval_seconds
+                    continue
+                
+                # Create gap-filled candle
+                candles.append({
+                    'timestamp': current_time,
+                    'datetime': datetime.fromtimestamp(current_time).isoformat(),
+                    'open': fill_price,
+                    'high': fill_price,
+                    'low': fill_price,
+                    'close': fill_price,
+                    'volume': 0.0,
+                    'trades': 0
+                })
+            
+            current_time += self.interval_seconds
+        
+        return candles
 
 
 def convert_file(input_path: Path, output_path: Path, timeframe: str, chunk_size: int = 100000):
-    """Convert tick data file to OHLCV format with specified timeframe."""
-    converter = TickToOHLCVConverter(timeframe, chunk_size)
+    """Convert tick data file to OHLCV format with gap filling."""
+    converter = TickToOHLCVConverter(timeframe)
     
     print(f"Processing {input_path}...")
-    print(f"Converting to {timeframe} timeframe")
-    print(f"Output will be saved to {output_path}")
+    print(f"Converting to {timeframe} timeframe with gap filling")
+    print(f"Reading tick data...")
     
     rows_processed = 0
-    candles_written = 0
+    min_timestamp = None
+    max_timestamp = None
     
-    # Open input and output files
-    with open(input_path, 'r', newline='', encoding='utf-8') as infile, \
-         open(output_path, 'w', newline='', encoding='utf-8') as outfile:
-        
+    # First pass: read all ticks and organize by interval
+    with open(input_path, 'r', newline='', encoding='utf-8') as infile:
         reader = csv.DictReader(infile)
         
-        # Write header
-        fieldnames = ['timestamp', 'datetime', 'open', 'high', 'low', 'close', 'volume', 'trades']
-        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
-        writer.writeheader()
-        
-        # Process rows in chunks
         for row in reader:
             rows_processed += 1
             
             # Process tick
-            candle = converter.process_tick(row)
-            if candle:
-                writer.writerow(candle)
-                candles_written += 1
+            converter.process_tick(row)
             
-            # Progress update every chunk_size rows
+            # Track time range
+            timestamp = float(row['timestamp'])
+            if timestamp > 1e10:
+                timestamp = timestamp / 1000
+            
+            if min_timestamp is None or timestamp < min_timestamp:
+                min_timestamp = timestamp
+            if max_timestamp is None or timestamp > max_timestamp:
+                max_timestamp = timestamp
+            
+            # Progress update
             if rows_processed % chunk_size == 0:
-                print(f"Processed {rows_processed:,} ticks, generated {candles_written:,} candles...")
+                print(f"Read {rows_processed:,} ticks...")
+    
+    print(f"Total ticks read: {rows_processed:,}")
+    
+    if min_timestamp is None or max_timestamp is None:
+        print("No valid data found in input file")
+        return
+    
+    # Determine the full day range (09:00 UTC to next day 08:59:59 UTC)
+    # Bybit data runs from 09:00 UTC to next day 08:59:59 UTC
+    start_datetime = datetime.fromtimestamp(min_timestamp)
+    
+    # Find the 09:00 UTC for this day
+    if start_datetime.hour < 9:
+        # Data from previous day's session
+        day_start = start_datetime.replace(hour=9, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    else:
+        # Data from current day's session
+        day_start = start_datetime.replace(hour=9, minute=0, second=0, microsecond=0)
+    
+    # End time is next day 08:59:59
+    day_end = day_start + timedelta(hours=24) - timedelta(seconds=1)
+    
+    start_interval = converter.get_interval(day_start.timestamp())
+    end_interval = converter.get_interval(day_end.timestamp())
+    
+    print(f"Generating continuous OHLCV data from {day_start} to {day_end}...")
+    
+    # Generate all candles including gaps
+    candles = converter.generate_all_candles(start_interval, end_interval)
+    
+    # Write output
+    print(f"Writing output to {output_path}...")
+    with open(output_path, 'w', newline='', encoding='utf-8') as outfile:
+        fieldnames = ['timestamp', 'datetime', 'open', 'high', 'low', 'close', 'volume', 'trades']
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
         
-        # Don't forget the last candle
-        final_candle = converter.get_final_candle()
-        if final_candle:
-            writer.writerow(final_candle)
-            candles_written += 1
+        for candle in candles:
+            writer.writerow(candle)
     
     print(f"\nConversion complete!")
-    print(f"Total ticks processed: {rows_processed:,}")
-    print(f"Total {timeframe} candles generated: {candles_written:,}")
+    print(f"Total {timeframe} candles generated: {len(candles):,}")
+    print(f"Expected candles for 24h period: {int(86400 / converter.interval_seconds):,}")
     print(f"Output saved to: {output_path}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Convert tick data to OHLCV format with multiple timeframe support',
+        description='Convert tick data to OHLCV format with gap filling',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Supported timeframes: 1s, 1m, 5m, 15m, 1h, 4h, 1d
 
+This version fills gaps in the data:
+- Missing intervals use previous close price
+- Volume is set to 0 for gap-filled intervals
+- If no previous data exists, uses the next available open price
+
 Examples:
-  # Convert to 1-minute candles
-  python convert_to_ohlcv.py input.csv -t 1m
+  # Convert to 1-second candles with gap filling
+  python convert_to_ohlcv.py input.csv -t 1s
   
-  # Convert to 5-minute candles with custom output
-  python convert_to_ohlcv.py input.csv -t 5m -o output_5m.csv
-  
-  # Convert to 1-hour candles with large chunk size
-  python convert_to_ohlcv.py input.csv -t 1h --chunk-size 500000
+  # Convert to 1-minute candles with custom output
+  python convert_to_ohlcv.py input.csv -t 1m -o output_1m.csv
         """
     )
     

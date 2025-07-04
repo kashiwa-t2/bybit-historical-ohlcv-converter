@@ -611,7 +611,7 @@ def decompress_file(gz_path: Path, csv_path: Path) -> bool:
 
 def convert_to_ohlcv(csv_path: Path, output_path: Path, timeframe: str = "1m") -> bool:
     """
-    Convert tick data to OHLCV format.
+    Convert tick data to OHLCV format with gap filling.
     
     Returns:
         True if successful, False otherwise
