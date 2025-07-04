@@ -9,6 +9,7 @@ Usage:
     python download.py BTCUSDT --end 2024-01-31
 """
 import argparse
+import concurrent.futures
 import gzip
 import re
 import shutil
@@ -240,6 +241,35 @@ def interactive_mode():
     # Get output directory
     output_dir = input(f"\n出力ディレクトリ [data]: ").strip() or "data"
     
+    # Get parallel downloads option
+    print("\n並列ダウンロードを使用しますか？")
+    print("  [1] いいえ（順次ダウンロード）")
+    print("  [2] はい（推奨: 4並列）")
+    print("  [3] カスタム設定")
+    
+    while True:
+        parallel_choice = input("選択 [1]: ").strip() or "1"
+        if parallel_choice == "1":
+            parallel_workers = 1
+            break
+        elif parallel_choice == "2":
+            parallel_workers = 4
+            break
+        elif parallel_choice == "3":
+            while True:
+                custom_workers = input("並列数を入力 (2-10): ").strip()
+                try:
+                    parallel_workers = int(custom_workers)
+                    if 2 <= parallel_workers <= 10:
+                        break
+                    else:
+                        print("2-10の範囲で入力してください。")
+                except ValueError:
+                    print("数値を入力してください。")
+            break
+        else:
+            print("1-3の数字を入力してください。")
+    
     # Confirmation
     print("\n" + "=" * 30)
     print("  設定確認")
@@ -250,6 +280,10 @@ def interactive_mode():
     print(f"期間: {date_desc}")
     print(f"時間足: {tf_desc}")
     print(f"出力先: {output_dir}/")
+    if parallel_workers > 1:
+        print(f"並列ダウンロード: {parallel_workers}並列")
+    else:
+        print(f"並列ダウンロード: 無効（順次処理）")
     print()
     
     confirm = input("この設定で実行しますか？ [Y/n]: ").strip().lower()
@@ -263,12 +297,12 @@ def interactive_mode():
     
     # Call the main download logic
     if timeframe == "custom_multiple":
-        return execute_download(symbol, start_date, end_date, timeframe, output_dir, market_type, max_retries=3, custom_timeframes=selected_timeframes)
+        return execute_download(symbol, start_date, end_date, timeframe, output_dir, market_type, max_retries=3, custom_timeframes=selected_timeframes, parallel_workers=parallel_workers)
     else:
-        return execute_download(symbol, start_date, end_date, timeframe, output_dir, market_type, max_retries=3)
+        return execute_download(symbol, start_date, end_date, timeframe, output_dir, market_type, max_retries=3, parallel_workers=parallel_workers)
 
 
-def execute_download(symbol: str, start_date: datetime, end_date: datetime, timeframe: str, output_dir: str, market_type: MarketType = MarketType.FUTURES, max_retries: int = 3, custom_timeframes: list = None) -> int:
+def execute_download(symbol: str, start_date: datetime, end_date: datetime, timeframe: str, output_dir: str, market_type: MarketType = MarketType.FUTURES, max_retries: int = 3, custom_timeframes: list = None, parallel_workers: int = 1) -> int:
     """Execute the download process with the given parameters."""
     try:
         # Check for future dates
@@ -289,30 +323,72 @@ def execute_download(symbol: str, start_date: datetime, end_date: datetime, time
         total_days = len(dates)
         
         print(f"\nProcessing {symbol} from {start_date.date()} to {end_date.date()}...")
-        print(f"Total days: {total_days}\n")
+        print(f"Total days: {total_days}")
+        if parallel_workers > 1:
+            print(f"Parallel downloads: {parallel_workers} workers")
+        print()
         
         success_count = 0
         failed_dates = []
-        consecutive_failures = 0
         
-        for i, date in enumerate(dates, 1):
-            date_str = date.strftime("%Y-%m-%d")
-            print(f"[{i}/{total_days}] {date_str}:")
-            
-            if process_date(symbol, date, output_dir_path, timeframe, market_type, max_retries, custom_timeframes):
-                success_count += 1
-                consecutive_failures = 0  # Reset consecutive failure counter
-            else:
-                failed_dates.append(date_str)
-                consecutive_failures += 1
+        if parallel_workers > 1:
+            # Parallel processing
+            with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+                # Submit all tasks
+                future_to_date = {}
+                for i, date in enumerate(dates, 1):
+                    future = executor.submit(process_date_with_progress, symbol, date, output_dir_path, 
+                                           timeframe, market_type, max_retries, custom_timeframes, i, total_days)
+                    future_to_date[future] = date
                 
-                # Check for too many consecutive failures
-                if consecutive_failures >= 3:
-                    print(f"\n⚠️  3日連続でデータが見つかりませんでした。")
-                    print(f"   対象の取引ペア '{symbol}' のデータが利用可能か確認してください:")
-                    print(f"   https://public.bybit.com/trading/{symbol}")
-                    print(f"\n   処理を中止します。")
-                    break
+                # Process results as they complete
+                consecutive_failures = 0
+                for future in concurrent.futures.as_completed(future_to_date):
+                    date = future_to_date[future]
+                    date_str = date.strftime("%Y-%m-%d")
+                    
+                    try:
+                        if future.result():
+                            success_count += 1
+                            consecutive_failures = 0
+                        else:
+                            failed_dates.append(date_str)
+                            consecutive_failures += 1
+                            
+                            # Check for too many consecutive failures
+                            if consecutive_failures >= 3:
+                                print(f"\n⚠️  3日連続でデータが見つかりませんでした。")
+                                print(f"   対象の取引ペア '{symbol}' のデータが利用可能か確認してください:")
+                                print(f"   https://public.bybit.com/trading/{symbol}")
+                                print(f"\n   処理を中止します。")
+                                # Cancel remaining futures
+                                for f in future_to_date:
+                                    f.cancel()
+                                break
+                    except Exception as e:
+                        failed_dates.append(date_str)
+                        print(f"Error processing {date_str}: {e}")
+        else:
+            # Sequential processing (existing code)
+            consecutive_failures = 0
+            for i, date in enumerate(dates, 1):
+                date_str = date.strftime("%Y-%m-%d")
+                print(f"[{i}/{total_days}] {date_str}:")
+                
+                if process_date(symbol, date, output_dir_path, timeframe, market_type, max_retries, custom_timeframes):
+                    success_count += 1
+                    consecutive_failures = 0  # Reset consecutive failure counter
+                else:
+                    failed_dates.append(date_str)
+                    consecutive_failures += 1
+                    
+                    # Check for too many consecutive failures
+                    if consecutive_failures >= 3:
+                        print(f"\n⚠️  3日連続でデータが見つかりませんでした。")
+                        print(f"   対象の取引ペア '{symbol}' のデータが利用可能か確認してください:")
+                        print(f"   https://public.bybit.com/trading/{symbol}")
+                        print(f"\n   処理を中止します。")
+                        break
         
         # Summary
         print(f"\n{'='*50}")
@@ -439,6 +515,12 @@ Examples:
 
   # Download with all timeframes
   python download.py BTCUSDT --full -t all
+  
+  # Download with parallel processing (4 workers)
+  python download.py BTCUSDT --full -p 4
+  
+  # Download with maximum parallel processing
+  python download.py BTCUSDT --full -t all -p 8
         """
     )
     
@@ -488,6 +570,13 @@ Examples:
         type=int,
         default=3,
         help="Maximum download retries (default: 3)"
+    )
+    parser.add_argument(
+        "-p", "--parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of parallel downloads (default: 1). Recommended: 4-8"
     )
     return parser.parse_args()
 
@@ -607,6 +696,26 @@ def decompress_file(gz_path: Path, csv_path: Path) -> bool:
         print(f"Failed!")
         print(f"    Error: {e}")
         return False
+
+
+def process_date_with_progress(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
+                              market_type: MarketType, max_retries: int, custom_timeframes: list,
+                              index: int, total: int) -> bool:
+    """
+    Wrapper for process_date that prints progress information.
+    Used for parallel processing.
+    """
+    date_str = date.strftime("%Y-%m-%d")
+    print(f"[{index}/{total}] {date_str}: Starting...")
+    
+    result = process_date(symbol, date, output_dir, timeframe, market_type, max_retries, custom_timeframes)
+    
+    if result:
+        print(f"[{index}/{total}] {date_str}: Completed successfully")
+    else:
+        print(f"[{index}/{total}] {date_str}: Failed")
+    
+    return result
 
 
 def convert_to_ohlcv(csv_path: Path, output_path: Path, timeframe: str = "1m") -> bool:
@@ -834,7 +943,7 @@ def main():
                     end_date = latest_available
         
         # Execute download
-        return execute_download(symbol, start_date, end_date, args.timeframe, args.output_dir, market_type, args.max_retries)
+        return execute_download(symbol, start_date, end_date, args.timeframe, args.output_dir, market_type, args.max_retries, parallel_workers=args.parallel)
         
     except ValueError as e:
         print(f"Error: {e}")
