@@ -739,6 +739,13 @@ def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
         # Cleanup temporary CSV file
         csv_file.unlink(missing_ok=True)
         
+        # Remove temp directory if it's empty
+        try:
+            temp_dir.rmdir()
+        except OSError:
+            # Directory not empty or other error, ignore
+            pass
+        
         return success
         
     except Exception as e:
@@ -749,6 +756,14 @@ def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
         for tf in timeframes:
             output_file = symbol_dir / f"{symbol}_{date_str}_{tf}.csv"
             output_file.unlink(missing_ok=True)
+        
+        # Remove temp directory if it's empty
+        try:
+            temp_dir.rmdir()
+        except OSError:
+            # Directory not empty or other error, ignore
+            pass
+        
         return False
 
 
