@@ -34,7 +34,14 @@ python download.py
 ==================================================
 
 利用可能な取引ペア: https://public.bybit.com/trading/
-取引ペアを入力してください (例: BTCUSDT): BTCUSDT
+※ USDTは自動的に追加されます（例: BTC → BTCUSDT）
+取引ペアを入力してください (例: BTC): BTC
+
+市場タイプを選択してください:
+  [1] 先物 (Futures)
+  [2] 現物 (Spot)
+  [3] 両方 (Both)
+選択 [1]: 1
 
 ダウンロードする期間を選択してください:
   [1] 利用可能な全ての期間
@@ -70,13 +77,18 @@ python download.py
 ```
 data/
 └── BTCUSDT/
-    ├── BTCUSDT_2020-03-25_1s.csv
-    ├── BTCUSDT_2020-03-25_1m.csv
-    ├── BTCUSDT_2020-03-25_5m.csv
-    ├── BTCUSDT_2020-03-25_1h.csv
-    ├── BTCUSDT_2020-03-25_4h.csv
-    ├── BTCUSDT_2020-03-25_1d.csv
-    └── ...
+    ├── futures/
+    │   ├── BTCUSDT_2020-03-25_1s.csv
+    │   ├── BTCUSDT_2020-03-25_1m.csv
+    │   ├── BTCUSDT_2020-03-25_5m.csv
+    │   ├── BTCUSDT_2020-03-25_1h.csv
+    │   ├── BTCUSDT_2020-03-25_4h.csv
+    │   ├── BTCUSDT_2020-03-25_1d.csv
+    │   └── ...
+    └── spot/
+        ├── BTCUSDT_2022-11-10_1s.csv
+        ├── BTCUSDT_2022-11-10_1m.csv
+        └── ...
 ```
 
 各CSVファイルの形式：
@@ -107,8 +119,12 @@ timestamp,datetime,open,high,low,close,volume,trades
 
 ## ⚠️ 注意事項
 
-- **取引ペアの確認**: 使用前に https://public.bybit.com/trading/ で対象の取引ペアが利用可能であることを確認してください
-- データの利用可能期間は取引ペアによって異なります（例：BTCUSDT は 2020 年 3 月 25 日から）
+- **USDTペア専用**: このツールはUSDTペア専用です。入力時にUSDTは自動的に追加されます（例: BTC → BTCUSDT）
+- **市場タイプ**: 先物（futures）と現物（spot）のデータは別々に保存されます
+- **データ期間の違い**: 
+  - 先物: 通常2020年頃から利用可能
+  - 現物: 通常2022年11月頃から利用可能
+- **取引ペアの確認**: 使用前に https://public.bybit.com/trading/ （先物）または https://public.bybit.com/spot/ （現物）で対象の取引ペアが利用可能であることを確認してください
 - 未来の日付は指定できません
 
 ## 🔧 エラーが発生した場合
@@ -120,23 +136,27 @@ timestamp,datetime,open,high,low,close,volume,trades
 オプションを直接指定して実行することもできます：
 
 ```bash
-# 全期間・全時間足をダウンロード
-python download.py BTCUSDT --full -t all
+# 全期間のデータをダウンロード（先物・デフォルト）
+# USDTは自動的に追加されます
+python download.py BTC --full -t all
 
-# 特定の期間をダウンロード
-python download.py BTCUSDT --start 2024-01-01 --end 2024-01-31
+# 現物市場のデータをダウンロード
+python download.py BTC --start 2024-01-01 --end 2024-01-31 --market-type spot
 
-# 開始日から最新まで
-python download.py BTCUSDT --start 2024-01-01
+# 先物と現物の両方をダウンロード
+python download.py ETH --full --market-type both
 
-# 最古から終了日まで
-python download.py BTCUSDT --end 2024-01-31
+# 開始日から最新まで（先物）
+python download.py BTC --start 2024-01-01
+
+# 最古から終了日まで（現物）
+python download.py BTC --end 2024-01-31 --market-type spot
 
 # 特定の時間足のみ
-python download.py BTCUSDT --full -t 5m
+python download.py BTC --full -t 5m
 
 # カスタム出力ディレクトリ
-python download.py BTCUSDT --full --output-dir /path/to/data
+python download.py BTC --full --output-dir /path/to/data
 ```
 
 ### CLI オプション一覧
@@ -168,6 +188,8 @@ deactivate
 ## 📝 機能一覧
 
 - ✅ **対話形式**: ガイド付きで設定を選択
+- ✅ **USDT自動追加**: シンボル入力時にUSDTを自動的に追加（BTC → BTCUSDT）
+- ✅ **先物・現物対応**: 先物（futures）と現物（spot）の両方のデータに対応
 - ✅ **自動ダウンロード**: Bybit からティックデータ（.csv.gz）を自動ダウンロード
 - ✅ **データ変換**: ティックデータを複数の時間足（1 秒、1 分、5 分、15 分、1 時間、4 時間、1 日）の OHLCV 形式に変換
 - ✅ **重複スキップ**: 既にダウンロード済みのファイルは自動的にスキップ

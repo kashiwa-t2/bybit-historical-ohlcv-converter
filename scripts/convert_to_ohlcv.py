@@ -54,9 +54,14 @@ class TickToOHLCVConverter:
     
     def process_tick(self, row: Dict[str, str]) -> Optional[Dict]:
         """Process a single tick and return OHLCV data if interval is complete."""
+        # Handle different timestamp formats (seconds vs milliseconds)
         timestamp = float(row['timestamp'])
+        if timestamp > 1e10:  # If timestamp is in milliseconds
+            timestamp = timestamp / 1000
+        
         price = float(row['price'])
-        size = float(row['size'])
+        # Handle different volume column names (size vs volume)
+        size = float(row.get('size', row.get('volume', 0)))
         
         # Get the interval for this tick
         tick_interval = self.get_interval(timestamp)

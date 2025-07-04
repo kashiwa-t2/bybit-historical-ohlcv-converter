@@ -16,10 +16,17 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
+from enum import Enum
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
+
+
+class MarketType(Enum):
+    FUTURES = "futures"
+    SPOT = "spot"
+    BOTH = "both"
 
 
 def interactive_mode():
@@ -31,8 +38,9 @@ def interactive_mode():
     
     # Get symbol
     print("利用可能な取引ペア: https://public.bybit.com/trading/")
+    print("※ USDTは自動的に追加されます（例: BTC → BTCUSDT）")
     while True:
-        symbol = input("取引ペアを入力してください (例: BTCUSDT): ").strip().upper()
+        symbol = input("取引ペアを入力してください (例: BTC): ").strip().upper()
         if symbol:
             break
         print("取引ペアを入力してください。")
@@ -42,6 +50,26 @@ def interactive_mode():
     except ValueError as e:
         print(f"エラー: {e}")
         return 1
+    
+    # Ask for market type
+    print("\n市場タイプを選択してください:")
+    print("  [1] 先物 (Futures)")
+    print("  [2] 現物 (Spot)")
+    print("  [3] 両方 (Both)")
+    
+    while True:
+        market_choice = input("選択 [1]: ").strip() or "1"
+        if market_choice == "1":
+            market_type = MarketType.FUTURES
+            break
+        elif market_choice == "2":
+            market_type = MarketType.SPOT
+            break
+        elif market_choice == "3":
+            market_type = MarketType.BOTH
+            break
+        else:
+            print("1-3の数字を入力してください。")
     
     # Get date range option
     print("\nダウンロードする期間を選択してください:")
@@ -63,7 +91,7 @@ def interactive_mode():
     if choice == "1":
         # Full range
         print("    全期間の日付範囲を取得中...")
-        earliest_available, latest_available = fetch_available_date_range(symbol)
+        earliest_available, latest_available = fetch_available_date_range(symbol, market_type)
         if earliest_available is None or latest_available is None:
             print(f"日付範囲の自動取得に失敗しました。")
             print(f"一般的な期間 (2020-01-01 ～ 昨日) を使用しますか？")
@@ -129,7 +157,7 @@ def interactive_mode():
                 print("正しい日付形式で入力してください (YYYY-MM-DD)")
         
         print("    最古日付を取得中...")
-        earliest_available, _ = fetch_available_date_range(symbol)
+        earliest_available, _ = fetch_available_date_range(symbol, market_type)
         if earliest_available is None:
             print(f"最古日付の自動取得に失敗しました。")
             print(f"一般的な開始日を使用するか、手動で指定してください。")
@@ -217,6 +245,8 @@ def interactive_mode():
     print("  設定確認")
     print("=" * 30)
     print(f"取引ペア: {symbol}")
+    market_desc = {MarketType.FUTURES: "先物", MarketType.SPOT: "現物", MarketType.BOTH: "両方"}[market_type]
+    print(f"市場タイプ: {market_desc}")
     print(f"期間: {date_desc}")
     print(f"時間足: {tf_desc}")
     print(f"出力先: {output_dir}/")
@@ -233,12 +263,12 @@ def interactive_mode():
     
     # Call the main download logic
     if timeframe == "custom_multiple":
-        return execute_download(symbol, start_date, end_date, timeframe, output_dir, max_retries=3, custom_timeframes=selected_timeframes)
+        return execute_download(symbol, start_date, end_date, timeframe, output_dir, market_type, max_retries=3, custom_timeframes=selected_timeframes)
     else:
-        return execute_download(symbol, start_date, end_date, timeframe, output_dir, max_retries=3)
+        return execute_download(symbol, start_date, end_date, timeframe, output_dir, market_type, max_retries=3)
 
 
-def execute_download(symbol: str, start_date: datetime, end_date: datetime, timeframe: str, output_dir: str, max_retries: int = 3, custom_timeframes: list = None) -> int:
+def execute_download(symbol: str, start_date: datetime, end_date: datetime, timeframe: str, output_dir: str, market_type: MarketType = MarketType.FUTURES, max_retries: int = 3, custom_timeframes: list = None) -> int:
     """Execute the download process with the given parameters."""
     try:
         # Check for future dates
@@ -269,7 +299,7 @@ def execute_download(symbol: str, start_date: datetime, end_date: datetime, time
             date_str = date.strftime("%Y-%m-%d")
             print(f"[{i}/{total_days}] {date_str}:")
             
-            if process_date(symbol, date, output_dir_path, timeframe, max_retries, custom_timeframes):
+            if process_date(symbol, date, output_dir_path, timeframe, market_type, max_retries, custom_timeframes):
                 success_count += 1
                 consecutive_failures = 0  # Reset consecutive failure counter
             else:
@@ -313,7 +343,7 @@ def execute_download(symbol: str, start_date: datetime, end_date: datetime, time
         return 1
 
 
-def fetch_available_date_range(symbol: str) -> Tuple[Optional[datetime], Optional[datetime]]:
+def fetch_available_date_range(symbol: str, market_type: MarketType = MarketType.FUTURES) -> Tuple[Optional[datetime], Optional[datetime]]:
     """
     Fetch the available date range for a symbol from Bybit public data.
     
@@ -321,7 +351,11 @@ def fetch_available_date_range(symbol: str) -> Tuple[Optional[datetime], Optiona
         Tuple of (earliest_date, latest_date) or (None, None) if failed
     """
     try:
-        url = f"https://public.bybit.com/trading/{symbol}/"
+        # Determine URL based on market type
+        if market_type == MarketType.SPOT:
+            url = f"https://public.bybit.com/spot/{symbol}/"
+        else:  # FUTURES or BOTH (use futures for BOTH)
+            url = f"https://public.bybit.com/trading/{symbol}/"
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; BybitHistoricalOHLCVConverter/1.0)"
         }
@@ -333,12 +367,19 @@ def fetch_available_date_range(symbol: str) -> Tuple[Optional[datetime], Optiona
             html_content = response.read().decode('utf-8')
         
         # Extract file names matching patterns: Try different formats
-        patterns_to_try = [
-            rf'{re.escape(symbol)}\[(\d{{4}}-\d{{2}}-\d{{2}})\]\.csv\.gz',  # SYMBOL[YYYY-MM-DD].csv.gz
-            rf'{re.escape(symbol)}(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',     # SYMBOLYYYY-MM-DD.csv.gz
-            rf'{re.escape(symbol)}_(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',    # SYMBOL_YYYY-MM-DD.csv.gz
-            rf'{re.escape(symbol)}-(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',    # SYMBOL-YYYY-MM-DD.csv.gz
-        ]
+        if market_type == MarketType.SPOT:
+            # Spot uses daily files: SYMBOL_YYYY-MM-DD.csv.gz
+            patterns_to_try = [
+                rf'{re.escape(symbol)}_(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',  # SYMBOL_YYYY-MM-DD.csv.gz
+            ]
+        else:
+            # Futures uses daily files
+            patterns_to_try = [
+                rf'{re.escape(symbol)}\[(\d{{4}}-\d{{2}}-\d{{2}})\]\.csv\.gz',  # SYMBOL[YYYY-MM-DD].csv.gz
+                rf'{re.escape(symbol)}(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',     # SYMBOLYYYY-MM-DD.csv.gz
+                rf'{re.escape(symbol)}_(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',    # SYMBOL_YYYY-MM-DD.csv.gz
+                rf'{re.escape(symbol)}-(\d{{4}}-\d{{2}}-\d{{2}})\.csv\.gz',    # SYMBOL-YYYY-MM-DD.csv.gz
+            ]
         
         matches = None
         for pattern in patterns_to_try:
@@ -381,11 +422,14 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download full available range
+  # Download full available range (futures)
   python download.py BTCUSDT --full
 
-  # Download specific date range
-  python download.py BTCUSDT --start 2024-01-01 --end 2024-01-31
+  # Download specific date range (spot market)
+  python download.py BTCUSDT --start 2024-01-01 --end 2024-01-31 --market-type spot
+
+  # Download both futures and spot data
+  python download.py BTCUSDT --start 2024-01-01 --market-type both -t all
 
   # Download from start date to latest
   python download.py BTCUSDT --start 2024-01-01
@@ -429,6 +473,12 @@ Examples:
         help="Target timeframe for OHLCV conversion (default: 1m). Use 'all' to generate all timeframes."
     )
     parser.add_argument(
+        "--market-type",
+        default="futures",
+        choices=["futures", "spot", "both"],
+        help="Market type (default: futures)"
+    )
+    parser.add_argument(
         "--output-dir",
         default="data",
         help="Output directory (default: data)"
@@ -443,26 +493,30 @@ Examples:
 
 
 def validate_symbol(symbol: str) -> str:
-    """Validate and normalize symbol."""
+    """Validate and normalize symbol, automatically append USDT if needed."""
     symbol = symbol.upper().strip()
     
-    # 基本的な検証のみ行う
+    # 基本的な検証
     if not symbol:
         raise ValueError("Symbol cannot be empty")
     
-    # 英数字のみ許可（ハイフンやアンダースコアは含まない）
+    # 英数字のみ許可
     if not symbol.isalnum():
         raise ValueError(
             f"Invalid symbol: {symbol}. "
             "Symbol must contain only letters and numbers"
         )
     
-    # 最低3文字は必要
-    if len(symbol) < 3:
+    # 最低2文字は必要（BTなど）
+    if len(symbol) < 2:
         raise ValueError(
             f"Invalid symbol: {symbol}. "
-            "Symbol must be at least 3 characters long"
+            "Symbol must be at least 2 characters long"
         )
+    
+    # USDTが含まれていない場合は自動的に追加
+    if not symbol.endswith('USDT'):
+        symbol = symbol + 'USDT'
     
     return symbol
 
@@ -483,11 +537,18 @@ def generate_dates(start_date: datetime, end_date: datetime):
         current += timedelta(days=1)
 
 
-def build_download_url(symbol: str, date: datetime) -> str:
+def build_download_url(symbol: str, date: datetime, market_type: MarketType = MarketType.FUTURES) -> str:
     """Build Bybit download URL for given symbol and date."""
     date_str = date.strftime("%Y-%m-%d")
-    filename = f"{symbol}{date_str}.csv.gz"
-    return f"https://public.bybit.com/trading/{symbol}/{filename}"
+    
+    if market_type == MarketType.SPOT:
+        # Spot uses daily files: SYMBOL_YYYY-MM-DD.csv.gz
+        filename = f"{symbol}_{date_str}.csv.gz"
+        return f"https://public.bybit.com/spot/{symbol}/{filename}"
+    else:
+        # Futures uses daily files: SYMBOL[YYYY-MM-DD].csv.gz
+        filename = f"{symbol}{date_str}.csv.gz"
+        return f"https://public.bybit.com/trading/{symbol}/{filename}"
 
 
 def download_file(url: str, output_path: Path, max_retries: int = 3) -> bool:
@@ -595,17 +656,24 @@ def convert_to_ohlcv(csv_path: Path, output_path: Path, timeframe: str = "1m") -
         return False
 
 
-def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, max_retries: int, custom_timeframes: list = None) -> bool:
+def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, market_type: MarketType, max_retries: int, custom_timeframes: list = None) -> bool:
     """
     Process a single date: download and convert.
     
     Returns:
         True if successful or already exists, False if failed
     """
+    # Handle BOTH market type by processing both futures and spot
+    if market_type == MarketType.BOTH:
+        futures_success = process_date(symbol, date, output_dir, timeframe, MarketType.FUTURES, max_retries, custom_timeframes)
+        spot_success = process_date(symbol, date, output_dir, timeframe, MarketType.SPOT, max_retries, custom_timeframes)
+        return futures_success and spot_success
+    
     date_str = date.strftime("%Y-%m-%d")
     
-    # Setup paths
-    symbol_dir = output_dir / symbol
+    # Setup paths with market type subdirectory
+    market_subdir = "futures" if market_type == MarketType.FUTURES else "spot"
+    symbol_dir = output_dir / symbol / market_subdir
     symbol_dir.mkdir(parents=True, exist_ok=True)
     
     # Determine timeframes to process
@@ -632,14 +700,21 @@ def process_date(symbol: str, date: datetime, output_dir: Path, timeframe: str, 
     temp_dir = symbol_dir / "temp"
     temp_dir.mkdir(exist_ok=True)
     
-    gz_file = temp_dir / f"{symbol}{date_str}.csv.gz"
-    csv_file = temp_dir / f"{symbol}{date_str}.csv"
-    
     try:
+        # Download daily file for both spot and futures
+        if market_type == MarketType.SPOT:
+            # Spot uses underscore format
+            gz_file = temp_dir / f"{symbol}_{date_str}.csv.gz"
+            csv_file = temp_dir / f"{symbol}_{date_str}.csv"
+        else:
+            # Futures uses bracket format
+            gz_file = temp_dir / f"{symbol}{date_str}.csv.gz"
+            csv_file = temp_dir / f"{symbol}{date_str}.csv"
+        
         # Download only if CSV file doesn't exist
         if not csv_file.exists():
             # Download
-            url = build_download_url(symbol, date)
+            url = build_download_url(symbol, date, market_type)
             if not download_file(url, gz_file, max_retries):
                 return False
             
@@ -702,13 +777,17 @@ def main():
         # Validate inputs
         symbol = validate_symbol(args.symbol)
         
+        # Market type from argument
+        market_type = MarketType[args.market_type.upper()]
+        
         # Handle date range logic
         if args.full:
             # Full range: fetch all available data
-            earliest_available, latest_available = fetch_available_date_range(symbol)
+            earliest_available, latest_available = fetch_available_date_range(symbol, market_type)
             if earliest_available is None or latest_available is None:
                 print("Error: Could not determine available date range for this symbol")
-                print(f"Please check https://public.bybit.com/trading/{symbol} and specify dates manually")
+                url_path = "spot" if market_type == MarketType.SPOT else "trading"
+                print(f"Please check https://public.bybit.com/{url_path}/{symbol} and specify dates manually")
                 return 1
             
             start_date = earliest_available
@@ -719,10 +798,11 @@ def main():
             # Partial range: fetch available range if needed
             if not args.start or not args.end:
                 print("Fetching available date range to determine missing dates...")
-                earliest_available, latest_available = fetch_available_date_range(symbol)
+                earliest_available, latest_available = fetch_available_date_range(symbol, market_type)
                 if earliest_available is None or latest_available is None:
                     print("Error: Could not determine available date range for this symbol")
-                    print(f"Please check https://public.bybit.com/trading/{symbol}")
+                    url_path = "spot" if market_type == MarketType.SPOT else "trading"
+                    print(f"Please check https://public.bybit.com/{url_path}/{symbol}")
                     return 1
             
             # Use provided dates or fall back to available range
@@ -739,7 +819,7 @@ def main():
                     end_date = latest_available
         
         # Execute download
-        return execute_download(symbol, start_date, end_date, args.timeframe, args.output_dir, args.max_retries)
+        return execute_download(symbol, start_date, end_date, args.timeframe, args.output_dir, market_type, args.max_retries)
         
     except ValueError as e:
         print(f"Error: {e}")
